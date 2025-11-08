@@ -20,12 +20,27 @@ def _today_in_tz(tz_label: str) -> date:
         return date.today()
 
 
-def _last_week_window(tz_label: str) -> Tuple[str, str, str]:
+def _prev_calendar_week_window(tz_label: str) -> Tuple[str, str, str]:
+    """
+    Previous ISO calendar week (Mon..Sun) in tz_label.
+    Returns (start, end, label).
+    """
     today = _today_in_tz(tz_label)
-    this_monday = today - timedelta(days=today.weekday())
+    this_monday = today - timedelta(days=today.weekday())  # Monday of this week
     last_monday = this_monday - timedelta(days=7)
     last_sunday = last_monday + timedelta(days=6)
     return last_monday.isoformat(), last_sunday.isoformat(), f"{last_monday} to {last_sunday} (last_week)"
+
+
+def _last_7_days_up_to_yesterday(tz_label: str) -> Tuple[str, str, str]:
+    """
+    A 7-day window ending yesterday in tz_label.
+    If today is Monday, this becomes Mon-1..Sun-1 (the previous full week by days, not ISO).
+    """
+    today = _today_in_tz(tz_label)
+    end = today - timedelta(days=1)       # yesterday
+    start = end - timedelta(days=6)       # 7 days inclusive
+    return start.isoformat(), end.isoformat(), f"{start} to {end} (last_7_days)"
 
 
 def _rolling_days_window(tz_label: str, days: int) -> Tuple[str, str, str, str]:
@@ -40,6 +55,16 @@ def _rolling_days_window(tz_label: str, days: int) -> Tuple[str, str, str, str]:
 
 
 def _window_from_config(cfg: dict) -> Tuple[str, Optional[str], Optional[str], Optional[str], str]:
+    """
+    Returns (mode, start, end, interval, label).
+
+    Modes:
+      - custom_range: uses explicit start/end
+      - last_week:
+          * If today is Monday in tz -> last 7 days (Mon-1 .. Sun-1)
+          * Else -> previous calendar week (Mon..Sun)
+      - rolling_days: uses interval like '7d' and computes start/end for display
+    """
     w = cfg["report"]["window"]
     tz_label = cfg["report"].get("timezone_label", "Europe/Berlin")
     mode = w.get("mode", "custom_range")
@@ -50,7 +75,13 @@ def _window_from_config(cfg: dict) -> Tuple[str, Optional[str], Optional[str], O
         return mode, start, end, None, f"{start} to {end}"
 
     if mode == "last_week":
-        start, end, label = _last_week_window(tz_label)
+        today = _today_in_tz(tz_label)
+        if today.weekday() == 0:  # Monday
+            start, end, label = _last_7_days_up_to_yesterday(tz_label)
+            # Clarify in label that Monday logic used
+            label = f"{start} to {end} (last_week via last_7_days)"
+        else:
+            start, end, label = _prev_calendar_week_window(tz_label)
         return mode, start, end, None, label
 
     if mode == "rolling_days":
@@ -83,7 +114,7 @@ def run():
         if mode == "rolling_days":
             if not interval:
                 raise ValueError("rolling_days selected but no interval computed.")
-            # interval + end are BOTH required here
+            # interval + end are BOTH required here (end used for snapshot)
             jql = JiraClient.build_jql_union_window(key, interval=interval, end=end, extra_filters=extra)
             branch = "union: interval+end"
         else:
