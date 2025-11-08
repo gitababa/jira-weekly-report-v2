@@ -29,6 +29,20 @@ class JiraClient:
         self.sess.mount("https://", HTTPAdapter(max_retries=retry))
         self.sess.headers.update({"Accept": "application/json"})
 
+    @staticmethod
+    def _merge_filters(extra_filters: str) -> str:
+        """
+        Accepts strings that might already begin with 'AND ' or 'OR ' (as created by the config builder).
+        Returns a prefix-safe clause to concatenate to the main JQL.
+        """
+        f = (extra_filters or "").strip()
+        if not f:
+            return ""
+        up = f.upper()
+        if up.startswith("AND ") or up.startswith("OR "):
+            return " " + f  # already has logical operator
+        return " AND " + f  # add AND by default
+
     # ---------- JQL builder (friend’s OR logic) ----------
     @staticmethod
     def build_jql(
@@ -59,8 +73,7 @@ class JiraClient:
             resolved_term = f'resolved >= "{start}" AND resolved <= "{end}"'
             not_done_term = f'(statusCategory != Done AND updated >= "{start}" AND updated <= "{end}")'
 
-        filters = extra_filters.strip()
-        filters_clause = f" AND {filters}" if filters else ""
+        filters_clause = JiraClient._merge_filters(extra_filters)
 
         # Core OR window
         return f"project = {project_key} AND ( {created_term} OR {resolved_term} OR {not_done_term} ){filters_clause}"
