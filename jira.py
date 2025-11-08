@@ -34,7 +34,7 @@ class JiraClient:
             return " " + f
         return " AND " + f
 
-    # --- Builders kept for tests/back-compat (unchanged) ---
+    # -------- simple builders kept for tests/back-compat (unchanged) --------
     @staticmethod
     def build_jql_created(project_key: str, *, start: Optional[str] = None, end: Optional[str] = None,
                           interval: Optional[str] = None, extra_filters: str = "") -> str:
@@ -66,7 +66,7 @@ class JiraClient:
         term = f'created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}")'
         return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
-    # --- Unified union builder used at runtime ---
+    # ------------------------ unified union builder used at runtime ------------------------
     @staticmethod
     def build_jql_union_window(
         project_key: str,
@@ -76,6 +76,15 @@ class JiraClient:
         interval: Optional[str] = None,
         extra_filters: str = "",
     ) -> str:
+        """
+        Union of:
+          - Created in window
+          - Resolved in window (via 'resolved' alias + IS NOT EMPTY)
+          - Open as-of end (created <= end AND (resolved IS EMPTY OR resolved > end))
+
+        Rolling-days: created/resolved use interval; snapshot still needs a concrete end.
+        Custom/last-week: wrap dates with startOfDay()/endOfDay() for inclusive edges.
+        """
         # Allow interval + end (snapshot), but not interval + start
         if interval and start:
             raise ValueError("When using 'interval', do not pass 'start'; provide 'end' only for the snapshot.")
@@ -85,25 +94,23 @@ class JiraClient:
                 raise ValueError("Union JQL with 'interval' also requires a concrete 'end' date for open-as-of-end.")
             end_expr = f'endOfDay("{end}")'
             created_term = f"created >= -{interval}"
-            # 'resolved' alias is fine in interval mode — it worked for you already
             resolved_term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
-            open_term = f"(created <= {end_expr} AND (resolutiondate IS EMPTY OR resolutiondate > {end_expr}))"
+            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
         else:
             if not (start and end):
                 raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when 'interval' is not used.")
-            # Use explicit day boundaries AND the real field name 'resolutiondate' for comparisons
             start_expr = f'startOfDay("{start}")'
             end_expr = f'endOfDay("{end}")'
             created_term = f"(created >= {start_expr} AND created <= {end_expr})"
-            # Require a resolution AND compare dates using 'resolutiondate'
-            resolved_term = f"(resolutiondate >= {start_expr} AND resolutiondate <= {end_expr} AND resolution IS NOT EMPTY)"
-            # For the snapshot, compare against 'resolutiondate' rather than the 'resolved' alias
-            open_term = f"(created <= {end_expr} AND (resolutiondate IS EMPTY OR resolutiondate > {end_expr}))"
+            # **Back to 'resolved' alias here** — more reliable in JQL date comparisons
+            resolved_term = f"(resolved >= {start_expr} AND resolved <= {end_expr} AND resolved IS NOT EMPTY)"
+            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
 
         filters = JiraClient._merge_filters(extra_filters)
         core = f"( {created_term} OR {resolved_term} OR {open_term} )"
         return f"project = {project_key} AND {core}{filters}"
 
+    # ------------------------ enhanced search ------------------------
     def _search_enhanced(self, jql: str, fields: str = "*all", next_page_token: Optional[str] = None) -> Dict[str, Any]:
         url = self.base_url + "search/jql"
         params = {"jql": jql, "maxResults": 100}
