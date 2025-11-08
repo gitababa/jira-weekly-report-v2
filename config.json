@@ -2,8 +2,7 @@
   "report": {
     "timezone_label": "Europe/Berlin",
     "window": {
-      "mode": "rolling_days",
-      "rolling_days": 7
+      "mode": "last_week"
     },
     "show_top_n": 10,
     "include_csv_attachment": true,
