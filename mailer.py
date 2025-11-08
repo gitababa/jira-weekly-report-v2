@@ -13,10 +13,12 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "").rstrip("/")
 
+
 def _status_name(fields: dict) -> str:
     return ((fields.get("status") or {}).get("name") or "").strip()
 
-def _table_all(rows: List[dict], title: str) -> str:
+
+def _table(rows: List[dict], title: str) -> str:
     if not rows:
         return f"<h3>{title}</h3><p>No issues.</p>"
     tr = []
@@ -28,7 +30,7 @@ def _table_all(rows: List[dict], title: str) -> str:
         status = _status_name(f) or "—"
         assignee = (f.get("assignee", {}) or {}).get("displayName", "—")
         created = (f.get("created") or "—")[:10]
-        resolutiondate = (f.get("resolutiondate") or "")[:10]
+        resolutiondate = (f.get("resolutiondate") or f.get("resolved") or "")[:10] or "—"
         flags = []
         if row["created_in_window"]: flags.append("Created")
         if row["resolved_in_window"]: flags.append("Resolved")
@@ -41,7 +43,7 @@ def _table_all(rows: List[dict], title: str) -> str:
             f"<td>{status}</td>"
             f"<td>{assignee}</td>"
             f"<td>{created}</td>"
-            f"<td>{resolutiondate or '—'}</td>"
+            f"<td>{resolutiondate}</td>"
             f"<td>{flag_str}</td>"
             f"</tr>"
         )
@@ -52,11 +54,8 @@ def _table_all(rows: List[dict], title: str) -> str:
         "<tbody>" + "".join(tr) + "</tbody></table>"
     )
 
+
 def _csv_bytes(rows: List[dict]) -> bytes:
-    """
-    One row per issue, sorted by Status then Key (stable).
-    Columns include the three boolean flags.
-    """
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Key", "Summary", "Status", "Assignee", "Created", "Resolved",
@@ -73,15 +72,19 @@ def _csv_bytes(rows: List[dict]) -> bytes:
             _status_name(f),
             (f.get("assignee", {}) or {}).get("displayName", ""),
             (f.get("created") or "")[:10],
-            (f.get("resolutiondate") or "")[:10],
+            (f.get("resolutiondate") or f.get("resolved") or "")[:10],
             "1" if row["created_in_window"] else "0",
             "1" if row["resolved_in_window"] else "0",
             "1" if row["open_at_end"] else "0",
         ])
     return buf.getvalue().encode("utf-8")
 
+
 def send_report(to_email: str, project_key: str, window_label: str,
                 rows: List[dict], counts: Dict[str, int], show_top_n: int = 20):
+    # Only include issues that actually matched the window (at least one flag true)
+    rows_in_window = [r for r in rows if r["created_in_window"] or r["resolved_in_window"] or r["open_at_end"]]
+
     html = f"""
     <html><body style="font-family:Arial,Helvetica,sans-serif">
       <h2>Jira Report — Project {project_key} — {window_label}</h2>
@@ -90,12 +93,12 @@ def send_report(to_email: str, project_key: str, window_label: str,
         <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Resolved (in window)</b><div style="font-size:28px;">{counts['resolved']}</div></div>
         <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Open (at end)</b><div style="font-size:28px;">{counts['open']}</div></div>
       </div>
-      {_table_all(rows[:show_top_n], f"Top {min(len(rows), show_top_n)} issues matched in this window")}
+      {_table(rows_in_window[:show_top_n], f"Top {min(len(rows_in_window), show_top_n)} issues matched in this window")}
       <p style="color:#777;margin-top:16px;">Flags: Created = created in window; Resolved = resolution set in window; Open@End = still open at the end of the window.</p>
     </body></html>
     """
 
-    csv_bytes = _csv_bytes(rows)
+    csv_bytes = _csv_bytes(rows_in_window)
     csv_name = f"{project_key}_report_{window_label.replace(' ', '_').replace('/', '-')}.csv"
 
     msg = MIMEMultipart("mixed")
