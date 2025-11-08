@@ -4,15 +4,24 @@ from typing import Dict, List
 
 
 def _day(s: str | None) -> str:
+    """Return YYYY-MM-DD from an ISO datetime string (or '' if missing)."""
     return (s or "")[:10]
+
+
+def _resolved_day(fields: dict) -> str:
+    """
+    Tests may provide 'resolved'; Jira REST provides 'resolutiondate'.
+    Support both, preferring the real REST field when present.
+    """
+    return _day(fields.get("resolutiondate") or fields.get("resolved"))
 
 
 def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
     """
     For each issue, compute boolean flags:
-      - created_in_window
-      - resolved_in_window  (uses resolutiondate)
-      - open_at_end        (created <= end AND (no resolutiondate OR resolutiondate > end))
+      - created_in_window     : start <= created <= end
+      - resolved_in_window    : start <= (resolutiondate|resolved) <= end
+      - open_at_end           : created <= end AND (no resolution OR resolution > end)
 
     Returns:
       {
@@ -34,10 +43,11 @@ def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
     for it in issues:
         f = it.get("fields", {})
         c = _day(f.get("created"))
-        r = _day(f.get("resolutiondate"))
-        created_in_window = (start <= c <= end)
-        resolved_in_window = (bool(r) and (start <= r <= end))
-        open_at_end = (c <= end) and (not r or r > end)
+        r = _resolved_day(f)
+
+        created_in_window = (start <= c <= end) if c else False
+        resolved_in_window = (start <= r <= end) if r else False
+        open_at_end = (c <= end) and (not r or r > end) if c else False
 
         if created_in_window:
             c_count += 1
@@ -74,13 +84,8 @@ def format_report(issues: List[dict], start: str, end: str) -> Dict[str, List[di
     def _minimal(row: dict) -> dict:
         return {"key": row["key"], "fields": row["fields"]}
 
-    created = [_minimal(r) if r["created_in_window"] else None for r in tagged]
-    created = [x for x in created if x is not None]
-
-    resolved = [_minimal(r) if r["resolved_in_window"] else None for r in tagged]
-    resolved = [x for x in resolved if x is not None]
-
-    open_in_window = [_minimal(r) if r["open_at_end"] else None for r in tagged]
-    open_in_window = [x for x in open_in_window if x is not None]
+    created = [_minimal(r) for r in tagged if r["created_in_window"]]
+    resolved = [_minimal(r) for r in tagged if r["resolved_in_window"]]
+    open_in_window = [_minimal(r) for r in tagged if r["open_at_end"]]
 
     return {"created": created, "resolved": resolved, "open": open_in_window}
