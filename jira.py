@@ -1,10 +1,10 @@
-# jira.py
 from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from datetime import datetime, timedelta
 
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
@@ -80,10 +80,7 @@ class JiraClient:
         Union of:
           - Created in window
           - Resolved in window (via 'resolved' alias + IS NOT EMPTY)
-          - Open as-of end (created <= end AND (resolved IS EMPTY OR resolved > end))
-
-        Rolling-days: created/resolved use interval; snapshot still needs a concrete end.
-        Custom/last-week: wrap dates with startOfDay()/endOfDay() for inclusive edges.
+          - Open as-of end snapshot
         """
         # Allow interval + end (snapshot), but not interval + start
         if interval and start:
@@ -92,19 +89,34 @@ class JiraClient:
         if interval:
             if not end:
                 raise ValueError("Union JQL with 'interval' also requires a concrete 'end' date for open-as-of-end.")
-            end_expr = f'endOfDay("{end}")'
+            # snapshot needs a concrete end; keep interval for created/resolved
+            end_expr = f'"{end}"'
             created_term = f"created >= -{interval}"
             resolved_term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
+            # open at end: created before end+1d, and (no resolution OR resolution on/after end+1d)
+            # for interval branch we stick with end-of-day via 'end' (this was working fine)
             open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
         else:
             if not (start and end):
                 raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when 'interval' is not used.")
-            start_expr = f'startOfDay("{start}")'
-            end_expr = f'endOfDay("{end}")'
-            created_term = f"(created >= {start_expr} AND created <= {end_expr})"
-            # **Back to 'resolved' alias here** — more reliable in JQL date comparisons
-            resolved_term = f"(resolved >= {start_expr} AND resolved <= {end_expr} AND resolved IS NOT EMPTY)"
-            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
+
+            # Inclusive window using the robust < end_plus_1d pattern (no startOfDay/endOfDay functions)
+            # Compute end_plus_1 = end + 1 day
+            try:
+                end_dt = datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+                end_plus_1 = end_dt.strftime("%Y-%m-%d")
+            except Exception:
+                # Fallback (shouldn't happen if end is valid ISO date)
+                end_plus_1 = end
+
+            start_s = f'"{start}"'
+            end_s = f'"{end}"'
+            endp1_s = f'"{end_plus_1}"'
+
+            created_term = f"(created >= {start_s} AND created < {endp1_s})"
+            resolved_term = f"(resolved >= {start_s} AND resolved < {endp1_s} AND resolved IS NOT EMPTY)"
+            # Snapshot: issue exists by end (created < end+1) and is not resolved by end (resolved >= end+1 OR not resolved)
+            open_term = f"(created < {endp1_s} AND (resolved IS EMPTY OR resolved >= {endp1_s}))"
 
         filters = JiraClient._merge_filters(extra_filters)
         core = f"( {created_term} OR {resolved_term} OR {open_term} )"
