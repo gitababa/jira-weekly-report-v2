@@ -67,6 +67,7 @@ class JiraClient:
         Else: created between inclusive dates.
         """
         if interval and (start or end):
+            # For the simple builders, interval must not be combined with explicit dates
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
             term = f"created >= -{interval}"
@@ -90,6 +91,7 @@ class JiraClient:
         Require 'resolved IS NOT EMPTY' to ensure a real resolution.
         """
         if interval and (start or end):
+            # For the simple builders, interval must not be combined with explicit dates
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
             term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
@@ -131,18 +133,19 @@ class JiraClient:
           - Open as-of end (created <= end AND (resolved IS EMPTY OR resolved > end))
         For rolling_days, created/resolved use interval; open-as-of-end still needs a concrete 'end' date.
         """
-        if interval and (start or end):
-            raise ValueError("Provide either (start & end) OR interval, not both.")
+        # Allow interval + end (we need end for the Open@End snapshot), but forbid interval + start
+        if interval and start:
+            raise ValueError("When using 'interval', do not pass 'start'; provide 'end' only for the snapshot.")
 
         if interval:
+            if not end:
+                raise ValueError("Union JQL with 'interval' also requires a concrete 'end' date for open-as-of-end.")
             created_term = f"created >= -{interval}"
             resolved_term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
-            if not end:
-                raise ValueError("Union JQL with interval also requires a concrete 'end' date for open-as-of-end.")
             open_term = f'(created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}"))'
         else:
             if not (start and end):
-                raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when interval is not used.")
+                raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when 'interval' is not used.")
             created_term = f'created >= "{start}" AND created <= "{end}"'
             resolved_term = f'resolved >= "{start}" AND resolved <= "{end}" AND resolved IS NOT EMPTY'
             open_term = f'(created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}"))'
