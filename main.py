@@ -92,7 +92,7 @@ def run():
         project_extra = (p.get("jql_extra") or "").strip()
 
         # Merge extras (they may already start with AND/OR — JiraClient handles that safely)
-        extra = " ".join(x for x in [global_jql_extra, project_extra] if x).strip()
+        extra = " ".join(x for x in [global_extra, project_extra] if x).strip()
 
         # --- Build three independent JQLs (compatible with all window modes) ---
         if mode == "rolling_days" and interval:
