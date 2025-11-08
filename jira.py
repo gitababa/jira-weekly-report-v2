@@ -6,17 +6,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")  # e.g. https://your-domain.atlassian.net
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
 
 class JiraClient:
-    """
-    Minimal Jira client using the ENHANCED search endpoint:
-      GET /rest/api/3/search/jql  (supports nextPageToken pagination)
-    """
-
     def __init__(self, base_url: Optional[str] = None, email: Optional[str] = None, api_token: Optional[str] = None):
         base = (base_url or JIRA_BASE_URL or "").rstrip("/")
         self.base_url = f"{base}/rest/api/3/"
@@ -25,23 +20,12 @@ class JiraClient:
             raise RuntimeError("JiraClient: missing or invalid JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN")
 
         self.sess = requests.Session()
-        retry = Retry(
-            total=5,
-            backoff_factor=0.6,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=None,  # retry on all methods
-        )
+        retry = Retry(total=5, backoff_factor=0.6, status_forcelist=(429, 500, 502, 503, 504), allowed_methods=None)
         self.sess.mount("https://", HTTPAdapter(max_retries=retry))
         self.sess.headers.update({"Accept": "application/json"})
 
-    # ------------------------ helpers ------------------------
-
     @staticmethod
     def _merge_filters(extra_filters: str) -> str:
-        """
-        Accept extra filters that might already begin with 'AND ' or 'OR ' (from config builder).
-        Return a safe clause to append to the WHERE.
-        """
         f = (extra_filters or "").strip()
         if not f:
             return ""
@@ -50,23 +34,10 @@ class JiraClient:
             return " " + f
         return " AND " + f
 
-    # ------------------------ JQL builders (kept for tests/back-compat) ------------------------
-    # NOTE: These remain unchanged so your pytest expectations keep passing.
-
+    # --- Builders kept for tests/back-compat (unchanged) ---
     @staticmethod
-    def build_jql_created(
-        project_key: str,
-        *,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        interval: Optional[str] = None,
-        extra_filters: str = "",
-    ) -> str:
-        """
-        Created in window.
-        If interval: created >= -{interval}
-        Else: created between inclusive dates.
-        """
+    def build_jql_created(project_key: str, *, start: Optional[str] = None, end: Optional[str] = None,
+                          interval: Optional[str] = None, extra_filters: str = "") -> str:
         if interval and (start or end):
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
@@ -78,18 +49,8 @@ class JiraClient:
         return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
     @staticmethod
-    def build_jql_resolved(
-        project_key: str,
-        *,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        interval: Optional[str] = None,
-        extra_filters: str = "",
-    ) -> str:
-        """
-        Resolved in window (JQL 'resolved' is alias of resolutiondate).
-        Require 'resolved IS NOT EMPTY' to ensure a real resolution.
-        """
+    def build_jql_resolved(project_key: str, *, start: Optional[str] = None, end: Optional[str] = None,
+                           interval: Optional[str] = None, extra_filters: str = "") -> str:
         if interval and (start or end):
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
@@ -101,21 +62,11 @@ class JiraClient:
         return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
     @staticmethod
-    def build_jql_open_asof_end(
-        project_key: str,
-        *,
-        end: str,
-        extra_filters: str = "",
-    ) -> str:
-        """
-        Still open at END of window (closing backlog snapshot).
-        created <= "end" AND (resolved IS EMPTY OR resolved > "end")
-        """
+    def build_jql_open_asof_end(project_key: str, *, end: str, extra_filters: str = "") -> str:
         term = f'created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}")'
         return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
-    # ------------------------ Unified union builder (used by runtime) ------------------------
-
+    # --- Unified union builder used at runtime ---
     @staticmethod
     def build_jql_union_window(
         project_key: str,
@@ -125,42 +76,33 @@ class JiraClient:
         interval: Optional[str] = None,
         extra_filters: str = "",
     ) -> str:
-        """
-        One JQL that fetches the union of:
-          - Created in window
-          - Resolved in window (resolved IS NOT EMPTY)
-          - Open as-of end (created <= end AND (resolved IS EMPTY OR resolved > end))
-
-        For rolling_days, created/resolved use interval; open-as-of-end still needs a concrete 'end' date.
-        For explicit start/end windows, we wrap with startOfDay()/endOfDay() to make boundaries truly inclusive.
-        """
-        # Allow interval + end (we need end for Open@End snapshot), but forbid interval + start
+        # Allow interval + end (snapshot), but not interval + start
         if interval and start:
             raise ValueError("When using 'interval', do not pass 'start'; provide 'end' only for the snapshot.")
 
         if interval:
             if not end:
                 raise ValueError("Union JQL with 'interval' also requires a concrete 'end' date for open-as-of-end.")
-            # interval-based terms; open snapshot uses endOfDay(end)
             end_expr = f'endOfDay("{end}")'
             created_term = f"created >= -{interval}"
+            # 'resolved' alias is fine in interval mode — it worked for you already
             resolved_term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
-            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
+            open_term = f"(created <= {end_expr} AND (resolutiondate IS EMPTY OR resolutiondate > {end_expr}))"
         else:
             if not (start and end):
                 raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when 'interval' is not used.")
-            # absolute range with explicit day boundaries
+            # Use explicit day boundaries AND the real field name 'resolutiondate' for comparisons
             start_expr = f'startOfDay("{start}")'
             end_expr = f'endOfDay("{end}")'
             created_term = f"(created >= {start_expr} AND created <= {end_expr})"
-            resolved_term = f"(resolved >= {start_expr} AND resolved <= {end_expr} AND resolved IS NOT EMPTY)"
-            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
+            # Require a resolution AND compare dates using 'resolutiondate'
+            resolved_term = f"(resolutiondate >= {start_expr} AND resolutiondate <= {end_expr} AND resolution IS NOT EMPTY)"
+            # For the snapshot, compare against 'resolutiondate' rather than the 'resolved' alias
+            open_term = f"(created <= {end_expr} AND (resolutiondate IS EMPTY OR resolutiondate > {end_expr}))"
 
         filters = JiraClient._merge_filters(extra_filters)
         core = f"( {created_term} OR {resolved_term} OR {open_term} )"
         return f"project = {project_key} AND {core}{filters}"
-
-    # ------------------------ Enhanced search with nextPageToken ------------------------
 
     def _search_enhanced(self, jql: str, fields: str = "*all", next_page_token: Optional[str] = None) -> Dict[str, Any]:
         url = self.base_url + "search/jql"
@@ -169,7 +111,6 @@ class JiraClient:
             params["fields"] = fields
         if next_page_token:
             params["nextPageToken"] = next_page_token
-
         resp = self.sess.get(url, params=params, auth=self.auth, timeout=30)
         resp.raise_for_status()
         return resp.json()
@@ -177,16 +118,15 @@ class JiraClient:
     def get_issues(self, jql: str) -> List[Dict[str, Any]]:
         issues: List[Dict[str, Any]] = []
         token: Optional[str] = None
-        # Fetch both resolutiondate (timestamp) and resolution (object)
         wanted_fields = "summary,issuetype,status,assignee,created,resolutiondate,resolution,updated,key"
-        guard_pages = 0
+        guard = 0
         while True:
             data = self._search_enhanced(jql, fields=wanted_fields, next_page_token=token)
             issues.extend(data.get("issues", []))
             token = data.get("nextPageToken")
             if not token:
                 break
-            guard_pages += 1
-            if guard_pages > 500:  # hard guard against runaway pagination
+            guard += 1
+            if guard > 500:
                 break
         return issues
