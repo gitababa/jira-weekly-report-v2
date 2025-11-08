@@ -3,11 +3,13 @@ on:
   pull_request:
     branches: [ main, master ]
   push:
-    branches: [ main, master ]
+    branches: [ main, master, dev ]  # if you want dev too
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
