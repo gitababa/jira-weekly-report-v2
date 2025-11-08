@@ -14,6 +14,10 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "").rstrip("/")
 
 
+def _status_name(fields: dict) -> str:
+    return ((fields.get("status") or {}).get("name") or "").strip()
+
+
 def _table(issues: List[dict], title: str) -> str:
     if not issues:
         return f"<h3>{title}</h3><p>No issues.</p>"
@@ -46,18 +50,27 @@ def _table(issues: List[dict], title: str) -> str:
 
 
 def _csv_bytes(groups: List[Tuple[str, List[dict]]]) -> bytes:
+    """
+    Build a single CSV. Within each bucket, issues are sorted by Status (ascending).
+    """
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Bucket", "Key", "Summary", "Status", "Assignee", "Created", "Resolved"])
+
     for bucket, issues in groups:
-        for it in issues:
+        # Sort by status name (case-insensitive); ties keep Python's stable order
+        issues_sorted = sorted(
+            issues,
+            key=lambda it: _status_name(it.get("fields", {})).lower()
+        )
+        for it in issues_sorted:
             f = it.get("fields", {})
             w.writerow(
                 [
                     bucket,
                     it.get("key"),
                     f.get("summary") or "",
-                    (f.get("status", {}) or {}).get("name", ""),
+                    _status_name(f),
                     (f.get("assignee", {}) or {}).get("displayName", ""),
                     (f.get("created") or "")[:10],
                     (f.get("resolved") or "")[:10],
@@ -67,6 +80,12 @@ def _csv_bytes(groups: List[Tuple[str, List[dict]]]) -> bytes:
 
 
 def send_report(to_email: str, project_key: str, window_label: str, buckets: Dict[str, List[dict]], show_top_n: int = 20):
+    """
+    Buckets expected:
+      - created:  issues created in window
+      - resolved: issues resolved in window
+      - open:     issues still open at the END of the window (closing backlog snapshot)
+    """
     created = buckets["created"]
     resolved = buckets["resolved"]
     open_ = buckets["open"]
@@ -75,22 +94,26 @@ def send_report(to_email: str, project_key: str, window_label: str, buckets: Dic
     <html><body style="font-family:Arial,Helvetica,sans-serif">
       <h2>Jira Report — Project {project_key} — {window_label}</h2>
       <div style="display:flex;gap:16px;margin:10px 0;">
-        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Created</b><div style="font-size:28px;">{len(created)}</div></div>
-        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Resolved</b><div style="font-size:28px;">{len(resolved)}</div></div>
-        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Open</b><div style="font-size:28px;">{len(open_)}</div></div>
+        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Created (in window)</b><div style="font-size:28px;">{len(created)}</div></div>
+        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Resolved (in window)</b><div style="font-size:28px;">{len(resolved)}</div></div>
+        <div style="padding:12px;border:1px solid #ddd;border-radius:8px;"><b>Open (at end)</b><div style="font-size:28px;">{len(open_)}</div></div>
       </div>
       {_table(created[:show_top_n], f"Top {min(len(created), show_top_n)} created in window")}
       <br/>
       {_table(resolved[:show_top_n], f"Top {min(len(resolved), show_top_n)} resolved in window")}
       <br/>
-      {_table(open_[:show_top_n], f"Top {min(len(open_), show_top_n)} open in window")}
-      <p style="color:#777;margin-top:16px;">Open = Created − Resolved (in this window).</p>
+      {_table(open_[:show_top_n], f"Top {min(len(open_), show_top_n)} open as of period end")}
+      <p style="color:#777;margin-top:16px;">Definitions: Created = issues created in window; Resolved = issues with resolution set in window; Open = still open at the end of the window.</p>
     </body></html>
     """
 
     attachments = []
     csv_bytes = _csv_bytes(
-        [("Created in window", created), ("Resolved in window", resolved), ("Open in window", open_)]
+        [
+            ("Created in window", created),
+            ("Resolved in window", resolved),
+            ("Open at end of window", open_),
+        ]
     )
     csv_name = f"{project_key}_report_{window_label.replace(' ', '_').replace('/', '-')}.csv"
     attachments.append((csv_name, csv_bytes))

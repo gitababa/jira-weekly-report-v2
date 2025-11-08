@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo  # Python 3.9+
 
 from jira import JiraClient
-from report import format_report
 from mailer import send_report  # was email.py
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.json")
@@ -93,24 +92,35 @@ def run():
         # Merge extras (they may already start with AND/OR — JiraClient handles that safely)
         extra = " ".join(x for x in [global_extra, project_extra] if x).strip()
 
-        # Build JQL using either start/end or interval
+        # --- Build three independent JQLs (compatible with all window modes) ---
         if mode == "rolling_days" and interval:
-            jql = JiraClient.build_jql(key, interval=interval, extra_filters=extra)
+            jql_created = JiraClient.build_jql_created(key, interval=interval, extra_filters=extra)
+            jql_resolved = JiraClient.build_jql_resolved(key, interval=interval, extra_filters=extra)
+            # For "open at end", we still use a concrete end-day snapshot:
+            jql_open_end = JiraClient.build_jql_open_asof_end(key, end=end, extra_filters=extra)
         else:
-            jql = JiraClient.build_jql(key, start=start, end=end, extra_filters=extra)
+            jql_created = JiraClient.build_jql_created(key, start=start, end=end, extra_filters=extra)
+            jql_resolved = JiraClient.build_jql_resolved(key, start=start, end=end, extra_filters=extra)
+            jql_open_end = JiraClient.build_jql_open_asof_end(key, end=end, extra_filters=extra)
 
-        print("Running JQL:\n", jql)
+        print(f"\nProject {key} — Window {window_label}")
+        print("JQL Created:\n", jql_created)
+        print("JQL Resolved:\n", jql_resolved)
+        print("JQL Open@End:\n", jql_open_end)
 
-        issues = jc.get_issues(jql)
-        # Always bucket by explicit dates so Open = Created − Resolved holds for the display window
-        buckets = format_report(issues, start, end)
+        # --- Fetch each bucket independently ---
+        issues_created = jc.get_issues(jql_created)
+        issues_resolved = jc.get_issues(jql_resolved)
+        issues_open_end = jc.get_issues(jql_open_end)
 
         print(
-            f"Counts — created={len(buckets['created'])} "
-            f"resolved={len(buckets['resolved'])} "
-            f"open={len(buckets['open'])}"
+            f"Counts — created={len(issues_created)} "
+            f"resolved={len(issues_resolved)} "
+            f"open@end={len(issues_open_end)}"
         )
 
+        # --- Send report (CSV + HTML tables) ---
+        buckets = {"created": issues_created, "resolved": issues_resolved, "open": issues_open_end}
         send_report(
             lead_email,
             key,
