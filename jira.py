@@ -43,9 +43,10 @@ class JiraClient:
             return " " + f  # already has logical operator
         return " AND " + f  # add AND by default
 
-    # ---------- JQL builder (friend’s OR logic) ----------
+    # ---------- New explicit JQL builders (3 independent queries) ----------
+
     @staticmethod
-    def build_jql(
+    def build_jql_created(
         project_key: str,
         *,
         start: Optional[str] = None,
@@ -54,31 +55,65 @@ class JiraClient:
         extra_filters: str = "",
     ) -> str:
         """
-        Build a window JQL with OR operators.
-        Exactly one of (start,end) or interval should be provided.
-        - If (start,end): both inclusive (YYYY-MM-DD)
-        - If interval: string like '7d'
+        Created in window.
+        If interval provided (e.g. '7d'): created >= -interval
+        Else inclusive dates: created >= "start" AND created <= "end"
         """
         if interval and (start or end):
             raise ValueError("Provide either (start & end) OR interval, not both.")
 
         if interval:
-            created_term = f"created >= -{interval}"
-            resolved_term = f"resolved >= -{interval}"
-            not_done_term = f"(statusCategory != Done AND updated >= -{interval})"
+            term = f"created >= -{interval}"
         else:
             if not (start and end):
                 raise ValueError("When interval is not given, 'start' and 'end' (YYYY-MM-DD) are required.")
-            created_term = f'created >= "{start}" AND created <= "{end}"'
-            resolved_term = f'resolved >= "{start}" AND resolved <= "{end}"'
-            not_done_term = f'(statusCategory != Done AND updated >= "{start}" AND updated <= "{end}")'
+            term = f'created >= "{start}" AND created <= "{end}"'
 
-        filters_clause = JiraClient._merge_filters(extra_filters)
+        return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
-        # Core OR window
-        return f"project = {project_key} AND ( {created_term} OR {resolved_term} OR {not_done_term} ){filters_clause}"
+    @staticmethod
+    def build_jql_resolved(
+        project_key: str,
+        *,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        interval: Optional[str] = None,
+        extra_filters: str = "",
+    ) -> str:
+        """
+        Resolved in window (uses the 'resolved' date; requires it to be not empty).
+        If interval: resolved >= -interval AND resolved IS NOT EMPTY
+        Else: resolved between start/end inclusive AND resolved IS NOT EMPTY
+        """
+        if interval and (start or end):
+            raise ValueError("Provide either (start & end) OR interval, not both.")
+
+        if interval:
+            term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
+        else:
+            if not (start and end):
+                raise ValueError("When interval is not given, 'start' and 'end' (YYYY-MM-DD) are required.")
+            term = f'resolved >= "{start}" AND resolved <= "{end}" AND resolved IS NOT EMPTY'
+
+        return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
+
+    @staticmethod
+    def build_jql_open_asof_end(
+        project_key: str,
+        *,
+        end: str,
+        extra_filters: str = "",
+    ) -> str:
+        """
+        Still open at END of window (closing backlog snapshot):
+          created <= "end" AND (resolved IS EMPTY OR resolved > "end")
+        Always uses a concrete end date (works with any window mode because main.py computes end).
+        """
+        term = f'created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}")'
+        return f"project = {project_key} AND {term}{JiraClient._merge_filters(extra_filters)}"
 
     # ---------- Enhanced search with nextPageToken ----------
+
     def _search_enhanced(self, jql: str, fields: str = "*all", next_page_token: Optional[str] = None) -> Dict[str, Any]:
         url = self.base_url + "search/jql"
         params = {"jql": jql, "maxResults": 100}
