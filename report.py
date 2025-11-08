@@ -2,31 +2,42 @@
 from __future__ import annotations
 from typing import Dict, List
 
-
 def _day(s: str | None) -> str:
     return (s or "")[:10]
 
-
-def format_report(issues: List[dict], start: str, end: str) -> Dict[str, List[dict]]:
+def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
     """
-    Bucketing rules (inclusive dates by day):
-      - created:   issue.fields.created in [start,end]
-      - resolved:  issue.fields.resolved in [start,end]
-      - open:      created minus resolved (by key)  => ensures created - resolved = open
+    For each issue, compute boolean flags:
+      - created_in_window
+      - resolved_in_window  (uses resolutiondate)
+      - open_at_end        (created <= end AND (no resolutiondate OR resolutiondate > end))
+    Returns:
+      {
+        "rows": [ { "key": ..., "fields": {...}, "created_in_window": bool, "resolved_in_window": bool, "open_at_end": bool }, ... ],
+        "counts": { "created": int, "resolved": int, "open": int }
+      }
     """
-    created: List[dict] = []
-    resolved: List[dict] = []
+    rows: List[dict] = []
+    c_count = r_count = o_count = 0
 
     for it in issues:
         f = it.get("fields", {})
         c = _day(f.get("created"))
-        r = _day(f.get("resolved"))
-        if start <= c <= end:
-            created.append(it)
-        if r and (start <= r <= end):
-            resolved.append(it)
+        r = _day(f.get("resolutiondate"))
+        created_in_window = (start <= c <= end)
+        resolved_in_window = (bool(r) and (start <= r <= end))
+        open_at_end = (c <= end) and (not r or r > end)
 
-    resolved_keys = {it.get("key") for it in resolved}
-    open_in_window = [it for it in created if it.get("key") not in resolved_keys]
+        if created_in_window: c_count += 1
+        if resolved_in_window: r_count += 1
+        if open_at_end: o_count += 1
 
-    return {"created": created, "resolved": resolved, "open": open_in_window}
+        rows.append({
+            "key": it.get("key"),
+            "fields": f,
+            "created_in_window": created_in_window,
+            "resolved_in_window": resolved_in_window,
+            "open_at_end": open_at_end,
+        })
+
+    return {"rows": rows, "counts": {"created": c_count, "resolved": r_count, "open": o_count}}
