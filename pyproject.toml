@@ -1,0 +1,38 @@
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = [
+  "^\\.venv",
+  "^venv",
+  "^build",
+  "^dist",
+  "^\\.git",
+  "^\\.mypy_cache",
+  "^\\.pytest_cache",
+  "^\\.ruff_cache"
+]
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = [
+  "E203",  # whitespace before ':', conflicts with Black
+  "W503",  # line break before binary operator, Black prefers this
+]
+exclude = [
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache"
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+no_implicit_optional = true
+check_untyped_defs = true
+exclude = "(^\\.venv|^venv|^build|^dist|^\\.git|^\\.mypy_cache|^\\.pytest_cache|^\\.ruff_cache)"
