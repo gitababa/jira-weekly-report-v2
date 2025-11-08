@@ -51,6 +51,7 @@ class JiraClient:
         return " AND " + f
 
     # ------------------------ JQL builders (kept for tests/back-compat) ------------------------
+    # NOTE: These remain unchanged so your pytest expectations keep passing.
 
     @staticmethod
     def build_jql_created(
@@ -67,7 +68,6 @@ class JiraClient:
         Else: created between inclusive dates.
         """
         if interval and (start or end):
-            # For the simple builders, interval must not be combined with explicit dates
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
             term = f"created >= -{interval}"
@@ -91,7 +91,6 @@ class JiraClient:
         Require 'resolved IS NOT EMPTY' to ensure a real resolution.
         """
         if interval and (start or end):
-            # For the simple builders, interval must not be combined with explicit dates
             raise ValueError("Provide either (start & end) OR interval, not both.")
         if interval:
             term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
@@ -131,24 +130,31 @@ class JiraClient:
           - Created in window
           - Resolved in window (resolved IS NOT EMPTY)
           - Open as-of end (created <= end AND (resolved IS EMPTY OR resolved > end))
+
         For rolling_days, created/resolved use interval; open-as-of-end still needs a concrete 'end' date.
+        For explicit start/end windows, we wrap with startOfDay()/endOfDay() to make boundaries truly inclusive.
         """
-        # Allow interval + end (we need end for the Open@End snapshot), but forbid interval + start
+        # Allow interval + end (we need end for Open@End snapshot), but forbid interval + start
         if interval and start:
             raise ValueError("When using 'interval', do not pass 'start'; provide 'end' only for the snapshot.")
 
         if interval:
             if not end:
                 raise ValueError("Union JQL with 'interval' also requires a concrete 'end' date for open-as-of-end.")
+            # interval-based terms; open snapshot uses endOfDay(end)
+            end_expr = f'endOfDay("{end}")'
             created_term = f"created >= -{interval}"
             resolved_term = f"resolved >= -{interval} AND resolved IS NOT EMPTY"
-            open_term = f'(created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}"))'
+            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
         else:
             if not (start and end):
                 raise ValueError("Union JQL requires 'start' and 'end' (YYYY-MM-DD) when 'interval' is not used.")
-            created_term = f'created >= "{start}" AND created <= "{end}"'
-            resolved_term = f'resolved >= "{start}" AND resolved <= "{end}" AND resolved IS NOT EMPTY'
-            open_term = f'(created <= "{end}" AND (resolved IS EMPTY OR resolved > "{end}"))'
+            # absolute range with explicit day boundaries
+            start_expr = f'startOfDay("{start}")'
+            end_expr = f'endOfDay("{end}")'
+            created_term = f"(created >= {start_expr} AND created <= {end_expr})"
+            resolved_term = f"(resolved >= {start_expr} AND resolved <= {end_expr} AND resolved IS NOT EMPTY)"
+            open_term = f"(created <= {end_expr} AND (resolved IS EMPTY OR resolved > {end_expr}))"
 
         filters = JiraClient._merge_filters(extra_filters)
         core = f"( {created_term} OR {resolved_term} OR {open_term} )"
