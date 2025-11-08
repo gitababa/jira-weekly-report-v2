@@ -5,49 +5,42 @@ from typing import Dict, List
 
 def _day(s: str | None) -> str:
     """Return YYYY-MM-DD from an ISO datetime string (or '' if missing)."""
-    return (s or "")[:10]
+    return (s or "").strip()[:10]
 
 
 def _resolved_day(fields: dict) -> str:
     """
-    Tests may provide 'resolved'; Jira REST provides 'resolutiondate'.
-    Support both, preferring the real REST field when present.
+    Prefer Jira REST 'resolutiondate'; fall back to 'resolved' for test fixtures / exports.
     """
     return _day(fields.get("resolutiondate") or fields.get("resolved"))
 
 
+def _has_resolution(fields: dict) -> bool:
+    """
+    True if the issue is resolved (resolution object present) OR a resolution date exists.
+    """
+    return bool(fields.get("resolution")) or bool(fields.get("resolutiondate") or fields.get("resolved"))
+
+
 def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
     """
-    For each issue, compute boolean flags:
-      - created_in_window     : start <= created <= end
-      - resolved_in_window    : start <= (resolutiondate|resolved) <= end
-      - open_at_end           : created <= end AND (no resolution OR resolution > end)
-
-    Returns:
-      {
-        "rows": [
-          {
-            "key": str,
-            "fields": dict,
-            "created_in_window": bool,
-            "resolved_in_window": bool,
-            "open_at_end": bool
-          }, ...
-        ],
-        "counts": { "created": int, "resolved": int, "open": int }
-      }
+    Flags per issue:
+      - created_in_window  : start <= created <= end
+      - resolved_in_window : (has resolution) AND (start <= resolutiondate <= end)
+      - open_at_end        : created <= end AND (no resolution OR resolutiondate > end)
     """
     rows: List[dict] = []
     c_count = r_count = o_count = 0
 
     for it in issues:
-        f = it.get("fields", {})
+        f = it.get("fields", {}) or {}
         c = _day(f.get("created"))
         r = _resolved_day(f)
+        has_res = _has_resolution(f)
 
-        created_in_window = (start <= c <= end) if c else False
-        resolved_in_window = (start <= r <= end) if r else False
-        open_at_end = (c <= end) and (not r or r > end) if c else False
+        created_in_window = bool(c and (start <= c <= end))
+        resolved_in_window = bool(has_res and r and (start <= r <= end))
+        open_at_end = bool(c and (c <= end) and (not has_res or (r and r > end)))
 
         if created_in_window:
             c_count += 1
@@ -72,12 +65,7 @@ def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
 # ---- Back-compat shim for existing tests ----
 def format_report(issues: List[dict], start: str, end: str) -> Dict[str, List[dict]]:
     """
-    Legacy API used by tests: return buckets as lists of issues.
-    Uses the flags produced by tag_issues to derive:
-      - "created":  issues created within [start, end]
-      - "resolved": issues resolved within [start, end]
-      - "open":     issues still open at end of window
-    Each item is a minimal {"key": ..., "fields": {...}} dict (matching the tests' expectations).
+    Legacy API: return buckets as lists of issues using the new flags.
     """
     tagged = tag_issues(issues, start, end)["rows"]
 
