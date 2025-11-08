@@ -30,7 +30,9 @@ def _table(issues: List[dict], title: str) -> str:
         status = (f.get("status", {}) or {}).get("name", "—")
         assignee = (f.get("assignee", {}) or {}).get("displayName", "—")
         created = (f.get("created") or "—")[:10]
-        resolved = (f.get("resolved") or "—")[:10] if f.get("resolved") else "—"
+        # IMPORTANT: Jira REST returns 'resolutiondate' (JQL 'resolved' alias).
+        resolutiondate = (f.get("resolutiondate") or "")[:10]
+        resolved_disp = resolutiondate if resolutiondate else "—"
         rows.append(
             f"<tr>"
             f"<td><a href='{url}'>{key}</a></td>"
@@ -38,7 +40,7 @@ def _table(issues: List[dict], title: str) -> str:
             f"<td>{status}</td>"
             f"<td>{assignee}</td>"
             f"<td>{created}</td>"
-            f"<td>{resolved}</td>"
+            f"<td>{resolved_disp}</td>"
             f"</tr>"
         )
     return (
@@ -51,17 +53,17 @@ def _table(issues: List[dict], title: str) -> str:
 
 def _csv_bytes(groups: List[Tuple[str, List[dict]]]) -> bytes:
     """
-    Build a single CSV. Within each bucket, issues are sorted by Status (ascending).
+    Build a single CSV. Within each bucket, issues are sorted by Status (ascending),
+    secondarily by Key for a stable order.
     """
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Bucket", "Key", "Summary", "Status", "Assignee", "Created", "Resolved"])
 
     for bucket, issues in groups:
-        # Sort by status name (case-insensitive); ties keep Python's stable order
         issues_sorted = sorted(
             issues,
-            key=lambda it: _status_name(it.get("fields", {})).lower()
+            key=lambda it: (_status_name(it.get("fields", {})).lower(), (it.get("key") or "").lower())
         )
         for it in issues_sorted:
             f = it.get("fields", {})
@@ -73,7 +75,7 @@ def _csv_bytes(groups: List[Tuple[str, List[dict]]]) -> bytes:
                     _status_name(f),
                     (f.get("assignee", {}) or {}).get("displayName", ""),
                     (f.get("created") or "")[:10],
-                    (f.get("resolved") or "")[:10],
+                    (f.get("resolutiondate") or "")[:10],  # show real resolved date
                 ]
             )
     return buf.getvalue().encode("utf-8")

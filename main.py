@@ -82,6 +82,8 @@ def run():
     projects = cfg.get("projects", [])
     global_extra = (cfg.get("global_jql_extra") or "").strip()
 
+    print(f"Window mode: {mode} | start={start} | end={end} | interval={interval} | label={window_label}")
+
     jc = JiraClient()
 
     for p in projects:
@@ -90,13 +92,13 @@ def run():
         project_extra = (p.get("jql_extra") or "").strip()
 
         # Merge extras (they may already start with AND/OR — JiraClient handles that safely)
-        extra = " ".join(x for x in [global_extra, project_extra] if x).strip()
+        extra = " ".join(x for x in [global_jql_extra, project_extra] if x).strip()
 
         # --- Build three independent JQLs (compatible with all window modes) ---
         if mode == "rolling_days" and interval:
             jql_created = JiraClient.build_jql_created(key, interval=interval, extra_filters=extra)
             jql_resolved = JiraClient.build_jql_resolved(key, interval=interval, extra_filters=extra)
-            # For "open at end", we still use a concrete end-day snapshot:
+            # For "open at end", we still use a concrete end-day snapshot (computed above from tz):
             jql_open_end = JiraClient.build_jql_open_asof_end(key, end=end, extra_filters=extra)
         else:
             jql_created = JiraClient.build_jql_created(key, start=start, end=end, extra_filters=extra)

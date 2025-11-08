@@ -43,7 +43,7 @@ class JiraClient:
             return " " + f  # already has logical operator
         return " AND " + f  # add AND by default
 
-    # ---------- New explicit JQL builders (3 independent queries) ----------
+    # ---------- Explicit JQL builders (3 independent queries) ----------
 
     @staticmethod
     def build_jql_created(
@@ -81,8 +81,8 @@ class JiraClient:
         extra_filters: str = "",
     ) -> str:
         """
-        Resolved in window (uses the 'resolved' date; requires it to be not empty).
-        If interval: resolved >= -interval AND resolved IS NOT EMPTY
+        Resolved in window (uses the 'resolved' JQL alias == resolutiondate).
+        If interval: resolved >= -{interval} AND resolved IS NOT EMPTY
         Else: resolved between start/end inclusive AND resolved IS NOT EMPTY
         """
         if interval and (start or end):
@@ -130,7 +130,8 @@ class JiraClient:
         issues: List[Dict[str, Any]] = []
         token: Optional[str] = None
         page_guard = 0
-        wanted_fields = "summary,issuetype,status,assignee,created,resolved,updated,key"
+        # IMPORTANT: Use resolutiondate (that's what the REST field is called)
+        wanted_fields = "summary,issuetype,status,assignee,created,resolutiondate,updated,key"
         while True:
             data = self._search_enhanced(jql, fields=wanted_fields, next_page_token=token)
             issues.extend(data.get("issues", []))
