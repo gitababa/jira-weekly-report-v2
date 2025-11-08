@@ -2,11 +2,10 @@
   "report": {
     "timezone_label": "Europe/Berlin",
     "window": {
-      "mode": "custom_range",
-      "start": "2025-11-01",
-      "end": "2025-11-07"
+      "mode": "rolling_days",
+      "rolling_days": 7
     },
-    "show_top_n": 20,
+    "show_top_n": 10,
     "include_csv_attachment": true,
     "alerts_email": ""
   },
