@@ -27,10 +27,11 @@ def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
     Flags per issue:
       - created_in_window  : start <= created <= end
       - resolved_in_window : (has resolution) AND (start <= resolutiondate <= end)
-      - open_at_end        : created <= end AND (no resolution OR resolutiondate > end)
+      - open_at_start      : created < start AND (no resolution OR resolutiondate >= start)
+      - open_at_end        : created <= end   AND (no resolution OR resolutiondate >  end)
     """
     rows: List[dict] = []
-    c_count = r_count = o_count = 0
+    c_count = r_count = o_start = o_end = 0
 
     for it in issues:
         f = it.get("fields", {}) or {}
@@ -40,14 +41,17 @@ def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
 
         created_in_window = bool(c and (start <= c <= end))
         resolved_in_window = bool(has_res and r and (start <= r <= end))
+        open_at_start = bool(c and (c < start) and (not has_res or (r and r >= start)))
         open_at_end = bool(c and (c <= end) and (not has_res or (r and r > end)))
 
         if created_in_window:
             c_count += 1
         if resolved_in_window:
             r_count += 1
+        if open_at_start:
+            o_start += 1
         if open_at_end:
-            o_count += 1
+            o_end += 1
 
         rows.append(
             {
@@ -55,11 +59,24 @@ def tag_issues(issues: List[dict], start: str, end: str) -> Dict[str, object]:
                 "fields": f,
                 "created_in_window": created_in_window,
                 "resolved_in_window": resolved_in_window,
+                "open_at_start": open_at_start,
                 "open_at_end": open_at_end,
             }
         )
 
-    return {"rows": rows, "counts": {"created": c_count, "resolved": r_count, "open": o_count}}
+    # identity: closing = opening + created − resolved
+    closing_calc = o_start + c_count - r_count
+
+    return {
+        "rows": rows,
+        "counts": {
+            "created": c_count,
+            "resolved": r_count,
+            "open_start": o_start,
+            "open": o_end,  # closing backlog
+            "closing_calc": closing_calc,
+        },
+    }
 
 
 # ---- Back-compat shim for existing tests ----
