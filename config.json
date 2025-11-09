@@ -2,13 +2,15 @@
   "report": {
     "timezone_label": "Europe/Berlin",
     "window": {
-      "mode": "last_week"
+      "mode": "custom_range",
+      "start": "2025-11-01",
+      "end": "2025-11-08"
     },
     "show_top_n": 10,
     "include_csv_attachment": true,
     "alerts_email": ""
   },
-  "global_jql_extra": "",
+  "global_jql_extra": "AND issuetype in (\"Get IT help\")",
   "projects": [
     {
       "key": "SUP",
