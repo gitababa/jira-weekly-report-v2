@@ -10,7 +10,7 @@
     "include_csv_attachment": true,
     "alerts_email": ""
   },
-  "global_jql_extra": "AND issuetype in (\"Get IT help\")",
+  "global_jql_extra": "AND issuetype in (\"Get IT help\") AND priority in (\"Low\")",
   "projects": [
     {
       "key": "SUP",
