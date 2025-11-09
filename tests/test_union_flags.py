@@ -1,4 +1,3 @@
-# tests/test_union_flags.py
 from jira import JiraClient
 from report import tag_issues
 
@@ -23,23 +22,28 @@ def test_flag_identity_equation():
     start, end = "2025-11-01", "2025-11-07"
 
     issues = [
-        _issue("IN", "2025-10-31T12:00:00.000+0000"),  # open before start -> counts in opening backlog
-        _issue("C1", "2025-11-01T09:00:00.000+0000"),  # created in window
-        _issue("C2", "2025-11-07T10:00:00.000+0000"),  # created on end day
-        _issue("R1", "2025-10-30T10:00:00.000+0000", "2025-11-02T08:00:00.000+0000"),  # resolved in window
-        _issue("R2", "2025-11-01T10:00:00.000+0000", "2025-11-05T08:00:00.000+0000"),  # created+resolved in window
-        _issue("NEXT", "2025-11-07T11:00:00.000+0000", "2025-11-08T08:00:00.000+0000"), # created in window, resolved after end
+        _issue("IN",   "2025-10-31T12:00:00.000+0000"),                      # open before start -> opening backlog
+        _issue("C1",   "2025-11-01T09:00:00.000+0000"),                      # created in window
+        _issue("C2",   "2025-11-07T10:00:00.000+0000"),                      # created on end day
+        _issue("R1",   "2025-10-30T10:00:00.000+0000", "2025-11-02T08:00:00.000+0000"),  # resolved in window
+        _issue("R2",   "2025-11-01T10:00:00.000+0000", "2025-11-05T08:00:00.000+0000"),  # created+resolved in window
+        _issue("NEXT", "2025-11-07T11:00:00.000+0000", "2025-11-08T08:00:00.000+0000"),  # created in window, resolved after end
     ]
 
     t = tag_issues(issues, start, end)
     c = t["counts"]
-    # Opening backlog: IN (1)
-    assert c["open_start"] == 1
+
+    # Opening backlog: IN and R1 (2)
+    assert c["open_start"] == 2
+
     # Created in window: C1, C2, R2, NEXT (4)
     assert c["created"] == 4
+
     # Resolved in window: R1, R2 (2)
     assert c["resolved"] == 2
+
     # Closing backlog (open at end): IN, C1, C2, NEXT (4)
     assert c["open"] == 4
-    # Identity holds
+
+    # Identity holds: Closing = Opening + Created − Resolved
     assert c["open"] == c["open_start"] + c["created"] - c["resolved"]
