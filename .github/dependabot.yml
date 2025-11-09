@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Keep Python deps fresh (requirements.txt)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"        # or "daily" / "monthly"
+      day: "monday"
+      time: "08:00"             # UTC
+    open-pull-requests-limit: 5
+    # optional: group related updates together
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Keep GitHub Actions versions up to date
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:10"             # UTC
+    open-pull-requests-limit: 5
